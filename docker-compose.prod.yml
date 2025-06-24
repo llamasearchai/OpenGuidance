@@ -1,0 +1,224 @@
+version: '3.8'
+
+services:
+  openguidance-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: openguidance-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - OPENGUIDANCE_API_HOST=0.0.0.0
+      - OPENGUIDANCE_API_PORT=8000
+      - OPENGUIDANCE_MODEL=gpt-4
+      - OPENGUIDANCE_TEMPERATURE=0.7
+      - OPENGUIDANCE_MAX_TOKENS=4000
+      - OPENGUIDANCE_ENABLE_MEMORY=true
+      - OPENGUIDANCE_ENABLE_EXECUTION=true
+      - LOG_LEVEL=INFO
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://openguidance:${POSTGRES_PASSWORD}@postgres:5432/openguidance
+    volumes:
+      - openguidance-data:/app/data
+      - openguidance-logs:/app/logs
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - openguidance-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  nginx:
+    image: nginx:alpine
+    container_name: openguidance-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - openguidance-static:/var/www/static:ro
+    depends_on:
+      - openguidance-api
+    networks:
+      - openguidance-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: openguidance-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks:
+      - openguidance-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: openguidance-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=openguidance
+      - POSTGRES_USER=openguidance
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - openguidance-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openguidance -d openguidance"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: openguidance-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - openguidance-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: openguidance-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - openguidance-network
+
+  openguidance-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: openguidance-worker
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - WORKER_MODE=true
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://openguidance:${POSTGRES_PASSWORD}@postgres:5432/openguidance
+    volumes:
+      - openguidance-data:/app/data
+      - openguidance-logs:/app/logs
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - openguidance-network
+    command: python -m openguidance.workers.background_processor
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+
+  openguidance-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: openguidance-scheduler
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - SCHEDULER_MODE=true
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://openguidance:${POSTGRES_PASSWORD}@postgres:5432/openguidance
+    volumes:
+      - openguidance-data:/app/data
+      - openguidance-logs:/app/logs
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - openguidance-network
+    command: python -m openguidance.scheduler.task_scheduler
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+
+volumes:
+  openguidance-data:
+    driver: local
+  openguidance-logs:
+    driver: local
+  openguidance-static:
+    driver: local
+  redis-data:
+    driver: local
+  postgres-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  openguidance-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

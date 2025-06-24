@@ -1,0 +1,318 @@
+name: OpenGuidance CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 2 * * 0'  # Weekly on Sunday at 2 AM
+
+env:
+  PYTHON_VERSION: '3.11'
+  POETRY_VERSION: '1.6.1'
+
+jobs:
+  lint-and-format:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install black flake8 mypy isort bandit safety
+        pip install -r requirements.txt
+    
+    - name: Run Black formatter check
+      run: black --check --diff openguidance/ tests/
+    
+    - name: Run isort import sorting check
+      run: isort --check-only --diff openguidance/ tests/
+    
+    - name: Run flake8 linting
+      run: flake8 openguidance/ tests/ --max-line-length=100 --extend-ignore=E203,W503
+    
+    - name: Run mypy type checking
+      run: mypy openguidance/ --ignore-missing-imports --no-strict-optional
+    
+    - name: Run bandit security check
+      run: bandit -r openguidance/ -f json -o bandit-report.json || true
+    
+    - name: Run safety dependency check
+      run: safety check --json --output safety-report.json || true
+    
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  test:
+    name: Test Suite
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+        exclude:
+          - os: windows-latest
+            python-version: '3.9'
+          - os: macos-latest
+            python-version: '3.9'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install system dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential gfortran libopenblas-dev liblapack-dev
+    
+    - name: Install system dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install openblas lapack
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip wheel setuptools
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+        pip install -e .
+    
+    - name: Run basic functionality tests
+      run: python -m pytest tests/test_basic_functionality.py -v --tb=short
+    
+    - name: Run core system tests
+      run: python -m pytest tests/test_core.py -v --tb=short
+    
+    - name: Run advanced functionality tests
+      run: python -m pytest tests/test_advanced_functionality.py -v --tb=short
+    
+    - name: Run integration tests
+      run: python -m pytest tests/test_integration.py -v --tb=short
+    
+    - name: Run CLI tests
+      run: python -m pytest tests/test_cli.py -v --tb=short
+    
+    - name: Run all tests with coverage
+      run: |
+        python -m pytest tests/ --cov=openguidance --cov-report=xml --cov-report=html --cov-fail-under=80
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  performance-tests:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+        pip install -e .
+        pip install pytest-benchmark
+    
+    - name: Run performance benchmarks
+      run: |
+        python -c "
+        import numpy as np
+        import time
+        from openguidance.navigation.filters.extended_kalman_filter import ExtendedKalmanFilter, EKFConfig
+        from openguidance.optimization.trajectory_optimization import TrajectoryOptimizer, TrajectoryOptimizerConfig
+        
+        # EKF Performance Test
+        config = EKFConfig(state_dim=12, measurement_dim=6)
+        ekf = ExtendedKalmanFilter(config)
+        
+        start_time = time.time()
+        for _ in range(1000):
+            ekf.predict(None, 0.01)
+        ekf_time = time.time() - start_time
+        print(f'EKF 1000 predictions: {ekf_time:.3f}s ({1000/ekf_time:.1f} Hz)')
+        
+        # Trajectory Optimization Performance Test  
+        from openguidance.core.types import Vehicle, VehicleType
+        vehicle = Vehicle(type=VehicleType.AIRCRAFT, mass=1000.0)
+        opt_config = TrajectoryOptimizerConfig(num_nodes=20, max_iterations=100)
+        optimizer = TrajectoryOptimizer(opt_config, vehicle)
+        
+        print('Performance tests completed successfully')
+        "
+
+  documentation:
+    name: Documentation Build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install sphinx sphinx-rtd-theme sphinx-autodoc-typehints
+        pip install -e .
+    
+    - name: Check README and documentation
+      run: |
+        python -c "
+        import markdown
+        with open('README.md', 'r') as f:
+            content = f.read()
+        html = markdown.markdown(content)
+        print(f'README.md processed successfully ({len(content)} chars)')
+        "
+    
+    - name: Validate package metadata
+      run: |
+        python setup.py check --metadata --strict
+        python -c "
+        import openguidance
+        print(f'Package version: {openguidance.__version__ if hasattr(openguidance, \"__version__\") else \"unknown\"}')
+        print('Package imports successfully')
+        "
+
+  docker-build:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        tags: openguidance:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Test Docker image
+      run: |
+        docker run --rm openguidance:test python -c "
+        import openguidance
+        from openguidance.core.system import OpenGuidance
+        from openguidance.core.config import Config
+        print('OpenGuidance Docker image working correctly')
+        "
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: [lint-and-format, test, performance-tests, documentation, docker-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+        pip install -r requirements.txt
+    
+    - name: Build package
+      run: python -m build
+    
+    - name: Check package
+      run: twine check dist/*
+    
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        body: |
+          OpenGuidance Release ${{ github.ref }}
+          
+          ## Features
+          - Advanced GNC (Guidance, Navigation, Control) framework
+          - Production-ready navigation filters (EKF, UKF, Particle Filter)
+          - Trajectory optimization with multiple algorithms
+          - AI-powered reinforcement learning controllers
+          - Multi-sensor fusion capabilities
+          - Real-time performance optimized
+          
+          ## Installation
+          ```bash
+          pip install openguidance
+          ```
+          
+          See README.md for full documentation.
+        draft: false
+        prerelease: false

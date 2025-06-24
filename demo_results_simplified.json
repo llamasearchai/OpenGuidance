@@ -1,0 +1,69 @@
+{
+  "navigation": {
+    "avg_computation_time_ms": 0.09815025329589844,
+    "max_computation_time_ms": 0.560760498046875,
+    "update_frequency_hz": 10188.460716298412,
+    "final_position": [
+      2016.4384543456733,
+      4.481231006138439,
+      -7032.241235534317
+    ],
+    "final_velocity": [
+      203.0210785716861,
+      -1.2179156361319352,
+      193.5891675151223
+    ],
+    "final_speed_ms": 280.52773025514887,
+    "final_altitude_m": 7032.241235534317,
+    "total_steps": 1000,
+    "performance_rating": "EXCELLENT"
+  },
+  "dynamics": {
+    "initial_state": {
+      "position": [
+        0.0,
+        0.0,
+        -8000.0
+      ],
+      "speed": 200.0,
+      "altitude": 8000.0
+    },
+    "final_state": {
+      "position": [
+        6224.250000000051,
+        3.0874406705627337,
+        -7977.574999999998
+      ],
+      "speed": 215.00525109941862,
+      "altitude": 7977.574999999998
+    },
+    "flight_metrics": {
+      "total_distance": 6224.291162487141,
+      "avg_speed": 207.5268217995148,
+      "max_speed": 215.00525109941862,
+      "flight_time": 30.0
+    },
+    "performance_rating": "EXCELLENT"
+  },
+  "performance": {
+    "ekf_performance": {
+      "iterations": 10000,
+      "total_time_s": 0.6440989971160889,
+      "frequency_hz": 15525.563686287893,
+      "time_per_iteration_ms": 0.06440989971160889,
+      "real_time_capable": true
+    },
+    "memory_usage": {
+      "current_memory_mb": 150.3125,
+      "efficient": true
+    },
+    "vehicle_creation": {
+      "vehicles_created": 1000,
+      "creation_time_s": 0.0016591548919677734,
+      "vehicles_per_second": 602716.4822531973
+    },
+    "overall_performance": "EXCELLENT"
+  },
+  "execution_time": 0.7617089748382568,
+  "overall_success": true
+}
