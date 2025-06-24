@@ -1,4 +1,8 @@
-# OpenGuidance: Advanced Aerospace Guidance Framework
+# OpenGuidance
+
+<div align="center">
+  <img src="OpenGuidancesvg.svg" alt="OpenGuidance Logo" width="200"/>
+</div>
 
 **Author:** Nik Jois (nikjois@llamasearch.ai)  
 **License:** Apache 2.0  
